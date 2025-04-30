@@ -14,8 +14,8 @@ import type { User } from '@/databases/entities/user';
 import { CredentialsRepository } from '@/databases/repositories/credentials.repository';
 import { ProjectRepository } from '@/databases/repositories/project.repository';
 import { SharedCredentialsRepository } from '@/databases/repositories/shared-credentials.repository';
-import type { ListQuery } from '@/requests';
 import { CredentialsTester } from '@/services/credentials-tester.service';
+import type { ListQueryDb } from '@/types-db';
 
 import {
 	decryptCredentialData,
@@ -25,13 +25,7 @@ import {
 	shareCredentialWithUsers,
 } from '../shared/db/credentials';
 import { createTeamProject, linkUserToProject } from '../shared/db/projects';
-import {
-	createAdmin,
-	createManyUsers,
-	createMember,
-	createOwner,
-	createUser,
-} from '../shared/db/users';
+import { createAdmin, createManyUsers, createMember, createOwner } from '../shared/db/users';
 import {
 	randomCredentialPayload as payload,
 	randomCredentialPayload,
@@ -84,7 +78,7 @@ beforeEach(async () => {
 	sharedCredentialsRepository = Container.get(SharedCredentialsRepository);
 });
 
-type GetAllResponse = { body: { data: ListQuery.Credentials.WithOwnedByAndSharedWith[] } };
+type GetAllResponse = { body: { data: ListQueryDb.Credentials.WithOwnedByAndSharedWith[] } };
 
 // ----------------------------------------
 // GET /credentials - fetch all credentials
@@ -102,7 +96,7 @@ describe('GET /credentials', () => {
 		expect(response.body.data.length).toBe(2); // owner retrieved owner cred and member cred
 
 		const savedCredentialsIds = [savedOwnerCredentialId, savedMemberCredentialId];
-		response.body.data.forEach((credential: ListQuery.Credentials.WithOwnedByAndSharedWith) => {
+		response.body.data.forEach((credential: ListQueryDb.Credentials.WithOwnedByAndSharedWith) => {
 			validateMainCredentialData(credential);
 			expect('data' in credential).toBe(false);
 			expect(savedCredentialsIds).toContain(credential.id);
@@ -1538,18 +1532,20 @@ describe('POST /credentials/test', () => {
 
 		await shareCredentialWithUsers(memberCredential, [owner]);
 
-		const response = await authOwnerAgent.get('/credentials').query({ onlySharedWithMe: true });
+		let response;
 
+		response = await authOwnerAgent.get('/credentials').query({ onlySharedWithMe: true });
 		expect(response.statusCode).toBe(200);
-
 		expect(response.body.data).toHaveLength(1);
 		expect(response.body.data[0].id).toBe(memberCredential.id);
 		expect(response.body.data[0].homeProject).not.toBeNull();
+
+		response = await authMemberAgent.get('/credentials').query({ onlySharedWithMe: true });
+		expect(response.statusCode).toBe(200);
+		expect(response.body.data).toHaveLength(0);
 	});
 
 	test('should return only credentials shared with me when ?onlySharedWithMe=true (admin)', async () => {
-		const admin = await createUser({ role: 'global:admin' });
-
 		await saveCredential(randomCredentialPayload(), {
 			user: admin,
 			role: 'credential:owner',
@@ -1567,13 +1563,17 @@ describe('POST /credentials/test', () => {
 
 		await shareCredentialWithUsers(memberCredential, [admin]);
 
-		const response = await authAdminAgent.get('/credentials').query({ onlySharedWithMe: true });
+		let response;
 
+		response = await authAdminAgent.get('/credentials').query({ onlySharedWithMe: true });
 		expect(response.statusCode).toBe(200);
-
 		expect(response.body.data).toHaveLength(1);
 		expect(response.body.data[0].id).toBe(memberCredential.id);
 		expect(response.body.data[0].homeProject).not.toBeNull();
+
+		response = await authMemberAgent.get('/credentials').query({ onlySharedWithMe: true });
+		expect(response.statusCode).toBe(200);
+		expect(response.body.data).toHaveLength(0);
 	});
 
 	test('should return only credentials shared with me when ?onlySharedWithMe=true (member)', async () => {
@@ -1594,13 +1594,21 @@ describe('POST /credentials/test', () => {
 
 		await shareCredentialWithUsers(ownerCredential, [member]);
 
-		const response = await authMemberAgent.get('/credentials').query({ onlySharedWithMe: true });
+		let response;
+
+		response = await authMemberAgent.get('/credentials').query({ onlySharedWithMe: true });
 
 		expect(response.statusCode).toBe(200);
 
 		expect(response.body.data).toHaveLength(1);
 		expect(response.body.data[0].id).toBe(ownerCredential.id);
 		expect(response.body.data[0].homeProject).not.toBeNull();
+
+		response = await authOwnerAgent.get('/credentials').query({ onlySharedWithMe: true });
+
+		expect(response.statusCode).toBe(200);
+
+		expect(response.body.data).toHaveLength(0);
 	});
 });
 
@@ -1621,7 +1629,7 @@ const INVALID_PAYLOADS = [
 	undefined,
 ];
 
-function validateMainCredentialData(credential: ListQuery.Credentials.WithOwnedByAndSharedWith) {
+function validateMainCredentialData(credential: ListQueryDb.Credentials.WithOwnedByAndSharedWith) {
 	const { name, type, sharedWithProjects, homeProject, isManaged } = credential;
 
 	expect(typeof name).toBe('string');
@@ -1641,7 +1649,9 @@ function validateMainCredentialData(credential: ListQuery.Credentials.WithOwnedB
 	}
 }
 
-function validateCredentialWithNoData(credential: ListQuery.Credentials.WithOwnedByAndSharedWith) {
+function validateCredentialWithNoData(
+	credential: ListQueryDb.Credentials.WithOwnedByAndSharedWith,
+) {
 	validateMainCredentialData(credential);
 
 	expect('data' in credential).toBe(false);
